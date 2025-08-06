@@ -1,7 +1,8 @@
 # File: PlatformAutomation/templates/shared/deploy-app.yml
 # This template contains the common deployment logic for various environment types.
 # It uses conditional statements to execute specific tasks based on the 'deploymentType' parameter.
-# It supports imperative deployments (e.g., Azure Web Apps) and declarative GitOps deployments (e.g., OpenShift/Argo CD).
+# It supports imperative deployments (e.g., Azure Web Apps, On-Premise VMs)
+# and declarative GitOps deployments (e.g., OpenShift/Argo CD).
 
 parameters:
 - name: environmentName
@@ -14,7 +15,17 @@ parameters:
   displayName: 'Deployment Type (e.g., azureWebApp, onPremiseFCI, openShift)'
   default: 'none'
 
-# Parameters for Azure Web App Deployment
+- name: appName
+  type: string
+  displayName: 'Application Name'
+  default: ''
+
+# Parameters for Azure Web App Deployment (PaaS or Container on App Service)
+- name: azureSubscriptionServiceConnection
+  type: string
+  displayName: 'Azure Subscription Service Connection'
+  default: ''
+
 - name: appServiceName
   type: string
   displayName: 'Azure App Service Name'
@@ -25,20 +36,15 @@ parameters:
   displayName: 'Azure Resource Group Name'
   default: ''
 
-- name: azureSubscriptionServiceConnection
+# Parameters for On-Premise FCI Deployment (File Copy Installation to VMs)
+- name: winRmServiceConnection
   type: string
-  displayName: 'Azure Subscription Service Connection'
+  displayName: 'WinRM Service Connection for On-Premise Windows'
   default: ''
 
-# Parameters for On-Premise FCI Deployment (File Copy Installation)
 - name: appServerName
   type: string
   displayName: 'On-Premise Server FQDN or IP'
-  default: ''
-
-- name: winRmServiceConnection
-  type: string
-  displayName: 'WinRM Service Connection for On-Premise'
   default: ''
 
 - name: remotePath
@@ -62,16 +68,20 @@ parameters:
   displayName: 'Base Kubernetes Image Name (e.g., youracr.azurecr.io/myimage)'
   default: ''
 
-# Common parameter for post-deployment tests
+# Common parameter for post-deployment tests (e.g., smoke tests, health checks)
 - name: appUrlForTests
   type: string
   displayName: 'Application URL for Post-Deployment Tests'
   default: ''
 
 steps:
-# --- Azure Web App Deployment ---
+# -----------------------------------------------------------
+# Azure Web App Deployment (for PaaS or Containerized Apps on App Service)
 # This block executes if the deploymentType is 'azureWebApp'.
-# It uses the AzureRmWebAppDeployment task to push the web application artifact directly to Azure App Service.
+# It uses the AzureRmWebAppDeployment task to push the web application artifact
+# (either a .zip for traditional web apps or a container image reference)
+# directly to Azure App Service.
+# -----------------------------------------------------------
 - ${{ if eq(parameters.deploymentType, 'azureWebApp') }}:
   - task: AzureRmWebAppDeployment@4
     displayName: 'Deploy to Azure Web App - ${{ parameters.environmentName }}'
@@ -81,7 +91,8 @@ steps:
       appType: 'webApp' # Specifies the target is an Azure Web App
       WebAppName: '${{ parameters.appServiceName }}' # Name of the Azure App Service instance
       ResourceGroupName: '${{ parameters.resourceGroupName }}' # Resource group where the App Service resides
-      packageForDeploy: '$(Pipeline.Workspace)/drop/BackendWebApp.zip' # Path to the published web app artifact (from the Build stage)
+      # The packageForDeploy could be a .zip file or a path to a Docker image (if using container-based App Service)
+      packageForDeploy: '$(Pipeline.Workspace)/drop/${{ parameters.appName }}.zip' # Assumes build-app.yml archives to this path
 
   - task: PowerShell@2
     displayName: 'Run Post-Deployment Tests/Checks for Azure Web App - ${{ parameters.environmentName }}'
@@ -89,16 +100,19 @@ steps:
       targetType: 'inline'
       script: |
         Write-Host "Running post-deployment tests for ${{ parameters.environmentName }} at ${{ parameters.appUrlForTests }}"
-        # This is a placeholder for actual test execution against the deployed app.
+        # Placeholder for actual test execution against the deployed app.
         # Example: Invoke-RestMethod -Uri "${{ parameters.appUrlForTests }}/health" -ErrorAction SilentlyContinue
         # Add logic here to check health endpoints, run simple smoke tests, etc.
     condition: and(succeeded(), ne('${{ parameters.appUrlForTests }}', '')) # Only runs if previous steps succeeded and a URL is provided
 
 ---
 
-# --- On-Premise FCI (File Copy Installation) Deployment ---
+# -----------------------------------------------------------
+# On-Premise FCI (File Copy Installation) Deployment to VMs
 # This block executes if the deploymentType is 'onPremiseFCI'.
-# It uses PowerShell to copy application files to a remote Windows server and optionally recycle IIS.
+# It uses PowerShell (via WinRM) to copy application files to a remote Windows server
+# and optionally recycle IIS. For Linux VMs, an SSH task could be used similarly.
+# -----------------------------------------------------------
 - ${{ if eq(parameters.deploymentType, 'onPremiseFCI') }}:
   - task: PowerShellOnTargetMachines@3
     displayName: 'Deploy to On-Premise FCI - ${{ parameters.environmentName }}'
@@ -113,17 +127,20 @@ steps:
             New-Item -ItemType Directory -Path $remotePath -Force
         } else {
             Write-Host "Cleaning existing files in $remotePath"
+            # Use -ErrorAction SilentlyContinue to avoid breaking if files are locked
             Remove-Item -Path "$remotePath\*" -Recurse -Force -ErrorAction SilentlyContinue
         }
         
         Write-Host "Copying application files to $remotePath"
-        Copy-Item -Path "$(Pipeline.Workspace)\drop\*" -Destination $remotePath -Recurse -Force
+        # The .zip artifact is downloaded by the stage, then unzipped by the agent.
+        # Assuming the build artifact is unzipped to $(Pipeline.Workspace)/drop/app_name/
+        Copy-Item -Path "$(Pipeline.Workspace)/drop/${{ parameters.appName }}/*" -Destination $remotePath -Recurse -Force
         Write-Host "Files copied successfully."
 
-        # Optional: Recycle IIS Application Pool if applicable
+        # Optional: Recycle IIS Application Pool if applicable (for .NET on Windows)
         try {
             # Replace 'YourAppPoolName' with the actual name of your IIS Application Pool
-            $appPoolName = "MyFlexibleDotnetApiAppPool"
+            $appPoolName = "${{ parameters.appName }}AppPool" # Example convention
             Write-Host "Attempting to recycle IIS Application Pool: $appPoolName"
             Import-Module WebAdministration -ErrorAction SilentlyContinue
             if (Get-WebAppPoolState $appPoolName | Select-Object -ExpandProperty Value -eq "Started") {
@@ -140,12 +157,24 @@ steps:
             Write-Warning "Ensure IIS Management cmdlets are installed and App Pool '$appPoolName' exists."
         }
 
+  - task: PowerShell@2
+    displayName: 'Run Post-Deployment Tests/Checks for On-Premise - ${{ parameters.environmentName }}'
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "Running post-deployment tests for On-Premise deployment in ${{ parameters.environmentName }}"
+        Write-Host "App URL for tests: ${{ parameters.appUrlForTests }}"
+        # Add logic to run tests against the on-premise application (e.g., curl, invoke-webrequest)
+    condition: and(succeeded(), ne('${{ parameters.appUrlForTests }}', ''))
+
 ---
 
-# --- OpenShift/Kubernetes Deployment (via GitOps/Argo CD) ---
+# -----------------------------------------------------------
+# OpenShift/Kubernetes Deployment (via GitOps/Argo CD) for Containers
 # This block executes if the deploymentType is 'openShift'.
 # It performs Git operations to update the Kubernetes manifest in a separate GitOps repository.
 # Argo CD will then detect this change and deploy to the cluster.
+# -----------------------------------------------------------
 - ${{ if eq(parameters.deploymentType, 'openShift') }}:
   - task: PowerShell@2
     displayName: 'Update GitOps Manifest for Argo CD - ${{ parameters.environmentName }}'
@@ -167,6 +196,8 @@ steps:
         git config --global user.name "Azure DevOps Automation"
         # Use System.AccessToken for authentication to the GitOps repo
         $PAT = "$(System.AccessToken)"
+        # The PAT needs to be correctly embedded for git clone/push over HTTPS
+        # For Azure DevOps repos, it's often user:PAT@repoUrl
         $repoUrlWithAuth = $gitOpsRepoUrl -replace "https://", "https://oauth2:$($PAT)@"
         git clone $repoUrlWithAuth $tempGitOpsPath -b main --depth 1 # Clone only the main branch, shallow clone
         Set-Location $tempGitOpsPath

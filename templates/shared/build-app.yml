@@ -1,0 +1,95 @@
+# File: PlatformAutomation/templates/shared/build-app.yml
+# This template provides a standardized, parameterized build process for various tech stacks.
+
+parameters:
+- name: appName
+  type: string
+- name: techStack
+  type: string
+- name: solutionPath
+  type: string
+  default: ''
+- name: buildConfiguration
+  type: string
+  default: 'Release'
+- name: containerRegistryServiceConnection
+  type: string
+  default: ''
+
+steps:
+# -----------------------------------------------------------
+# Conditional Build Logic for .NET
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'dotnet') }}:
+  - task: UseDotNet@2
+    displayName: 'Use .NET SDK 8.x'
+    inputs:
+      version: '8.x'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore NuGet Packages'
+    inputs:
+      command: 'restore'
+      projects: '${{ parameters.solutionPath }}'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Build and Publish .NET App'
+    inputs:
+      command: 'publish'
+      projects: '${{ parameters.solutionPath }}'
+      arguments: '--configuration ${{ parameters.buildConfiguration }} --output $(Build.ArtifactStagingDirectory)/app'
+
+# -----------------------------------------------------------
+# Conditional Build Logic for Python
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'python') }}:
+  - task: UsePythonVersion@0
+    displayName: 'Use Python 3.11'
+    inputs:
+      versionSpec: '3.11'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    displayName: 'Install Python Dependencies'
+
+# -----------------------------------------------------------
+# Conditional Build Logic for Node.js (Angular/React)
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'nodejs') }}:
+  - task: NodeTool@0
+    displayName: 'Use Node.js 20.x'
+    inputs:
+      versionSpec: '20.x'
+
+  - script: |
+      npm install
+      npm run build --prod
+    displayName: 'Install Dependencies & Build Node.js App'
+
+# -----------------------------------------------------------
+# Stage 2: Artifact Packaging (VMs) or Containerization (Containers)
+# -----------------------------------------------------------
+
+# Package for VM deployment (zipping the build output)
+- ${{ if not(endsWith(parameters.techStack, '-container')) }}:
+  - task: ArchiveFiles@2
+    displayName: 'Archive Published Files for VM'
+    inputs:
+      rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/drop/$(appName).zip'
+      replaceExistingArchive: true
+
+# Build and push Docker image for containerized deployment
+- ${{ if endsWith(parameters.techStack, '-container') }}:
+  - task: Docker@2
+    displayName: 'Build and Push Docker Image'
+    inputs:
+      command: 'buildAndPush'
+      repository: '${{ parameters.appName }}'
+      dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
+      containerRegistry: '${{ parameters.containerRegistryServiceConnection }}'
+      tags: |
+        $(Build.BuildId)
+        latest

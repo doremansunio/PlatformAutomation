@@ -1,0 +1,65 @@
+# File: PlatformAutomation/templates/python-ci-cd.yml
+
+parameters:
+- name: appName
+  type: string
+- name: solutionPath
+  type: string
+- name: techStack
+  type: string
+# ... other parameters (same as dotnet-ci-cd.yml)
+
+stages:
+- stage: Build
+  displayName: 'CI - Build & Test'
+  jobs:
+  - job: BuildAndTest
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    steps:
+    - template: shared/build-app.yml@platform_templates
+      parameters:
+        appName: ${{ parameters.appName }}
+        techStack: ${{ parameters.techStack }}
+        solutionPath: ${{ parameters.solutionPath }}
+        containerRegistryServiceConnection: ${{ parameters.containerRegistryServiceConnection }}
+    
+    - template: shared/run-tests.yml@platform_templates
+      parameters:
+        techStack: ${{ parameters.techStack }}
+        solutionPath: ${{ parameters.solutionPath }}
+
+# Deployment stages are identical to the .NET and Node.js templates
+- stage: DeployToDev
+  displayName: 'CD - Deploy to DEV (Argo CD for Containers)'
+  dependsOn: Build
+  condition: and(succeeded(), eq('${{ parameters.devDeploymentType }}', 'openShift'))
+  jobs:
+  - deployment: DeployDev
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: shared/deploy-app.yml@platform_templates
+            parameters:
+              environmentName: 'dev'
+              deploymentType: ${{ parameters.devDeploymentType }}
+              appName: ${{ parameters.appName }}
+              gitOpsRepoUrl: ${{ parameters.devGitOpsRepoUrl }}
+              manifestPath: ${{ parameters.devManifestPath }}
+              k8sImageName: ${{ parameters.devK8sImageName }}
+              appUrlForTests: ${{ parameters.devAppUrlForTests }}
+
+- stage: DeployToQA
+  displayName: 'CD - Deploy to QA (Argo CD)'
+  dependsOn: DeployToDev
+  condition: and(succeeded(), eq('${{ parameters.qaDeploymentType }}', 'openShift'))
+  # ... deployment steps are identical
+- stage: DeployToProd
+  displayName: 'CD - Deploy to PROD (Argo CD)'
+  dependsOn: DeployToQA
+  condition: and(succeeded(), eq('${{ parameters.prodDeploymentType }}', 'openShift'))
+  # ... deployment steps are identical

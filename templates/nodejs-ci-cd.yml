@@ -1,12 +1,10 @@
-# File: PlatformAutomation/templates/dotnet-ci-cd.yml
+# File: PlatformAutomation/templates/nodejs-ci-cd.yml
 
 parameters:
 - name: appName
   type: string
 - name: solutionPath
-  type: string
-- name: testProjectPath
-  type: string
+  type: string # Path to the root of the Node.js project (e.g., 'src/my-react-app')
 - name: techStack
   type: string
 - name: containerRegistryServiceConnection
@@ -15,8 +13,6 @@ parameters:
   type: string
 - name: agentPoolName
   type: string
-
-# Dev Environment (ASE)
 - name: devDeploymentType
   type: string
 - name: devAppServiceName
@@ -25,8 +21,6 @@ parameters:
   type: string
 - name: devAppUrlForTests
   type: string
-
-# QA Landing Zone (Argo CD)
 - name: qaDeploymentType
   type: string
 - name: qaGitOpsRepoUrl
@@ -37,8 +31,6 @@ parameters:
   type: string
 - name: qaAppUrlForTests
   type: string
-
-# Prod Landing Zone (Argo CD)
 - name: prodDeploymentType
   type: string
 - name: prodGitOpsRepoUrl
@@ -68,7 +60,7 @@ stages:
     - template: shared/run-tests.yml@platform_templates
       parameters:
         techStack: ${{ parameters.techStack }}
-        testProjectPath: ${{ parameters.testProjectPath }}
+        solutionPath: ${{ parameters.solutionPath }}
 
 - stage: DeployToDev
   displayName: 'CD - Deploy to DEV (ASE)'

@@ -1,0 +1,98 @@
+# File: PlatformAutomation/templates/shared/run-tests.yml
+# This template standardizes the unit testing process for various tech stacks.
+
+parameters:
+- name: techStack
+  type: string
+  displayName: 'Technology Stack'
+  default: ''
+
+- name: solutionPath
+  type: string
+  displayName: 'Path to solution or project file'
+  default: ''
+
+- name: testProjectPath
+  type: string
+  displayName: 'Path to test project'
+  default: ''
+
+- name: buildConfiguration
+  type: string
+  displayName: 'Build Configuration'
+  default: 'Release'
+
+- name: testRunTitle
+  type: string
+  displayName: 'Title for the test run'
+  default: '$(appName) Unit Tests'
+
+steps:
+# -----------------------------------------------------------
+# .NET Unit Testing
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'dotnet') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'Run .NET Unit Tests'
+    inputs:
+      command: 'test'
+      projects: '${{ parameters.testProjectPath }}'
+      arguments: '--configuration ${{ parameters.buildConfiguration }} --collect "Code coverage" --logger "trx;LogFileName=testresults.trx"'
+      publishTestResults: false
+
+  - task: PublishTestResults@2
+    displayName: 'Publish .NET Test Results'
+    inputs:
+      testResultsFormat: 'VSTest'
+      testResultsFiles: '$(Build.SourcesDirectory)/$(testProjectPath)/TestResults/**/*.trx'
+      failTaskOnFailedTests: true
+      testRunTitle: '${{ parameters.testRunTitle }}'
+    condition: succeededOrFailed()
+
+# -----------------------------------------------------------
+# Node.js (React/Angular) Unit Testing
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'nodejs') }}:
+  - task: NodeTool@0
+    displayName: 'Use Node.js 20.x'
+    inputs:
+      versionSpec: '20.x'
+
+  - script: |
+      npm install
+      npm test -- --reporter=jest-junit --outputFile=junit.xml || true
+    displayName: 'Run Node.js Unit Tests'
+    workingDirectory: '$(Build.SourcesDirectory)/$(solutionPath)'
+
+  - task: PublishTestResults@2
+    displayName: 'Publish Node.js Test Results'
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '$(Build.SourcesDirectory)/$(solutionPath)/junit.xml'
+      failTaskOnFailedTests: true
+      testRunTitle: '${{ parameters.testRunTitle }}'
+    condition: succeededOrFailed()
+
+# -----------------------------------------------------------
+# Python Unit Testing
+# -----------------------------------------------------------
+- ${{ if startsWith(parameters.techStack, 'python') }}:
+  - task: UsePythonVersion@0
+    displayName: 'Use Python 3.11'
+    inputs:
+      versionSpec: '3.11'
+
+  - script: |
+      python -m pip install pytest pytest-azurepipelines
+      pytest
+    displayName: 'Run Python Unit Tests'
+    workingDirectory: '$(Build.SourcesDirectory)/$(solutionPath)'
+
+  - task: PublishTestResults@2
+    displayName: 'Publish Python Test Results'
+    inputs:
+      testResultsFormat: 'VSTest'
+      testResultsFiles: '**/test-*.xml'
+      failTaskOnFailedTests: true
+      testRunTitle: '${{ parameters.testRunTitle }}'
+    condition: succeededOrFailed()
