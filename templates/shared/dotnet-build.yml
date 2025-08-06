@@ -1,0 +1,74 @@
+# File: PlatformAutomation/templates/shared/dotnet-build.yml
+# This template defines the common steps for building a .NET application,
+# including restoring NuGet packages, building the project, and optionally
+# building and pushing a Docker image if the techStack parameter is 'dotnet-container'.
+
+parameters:
+- name: solutionPath
+  type: string
+  displayName: 'Path to .NET Solution File'
+  default: '' # Example: 'src/MyWebApp/MyWebApp.sln'
+
+- name: buildConfiguration
+  type: string
+  displayName: 'Build Configuration (e.g., Release, Debug)'
+  default: 'Release'
+
+- name: appName
+  type: string
+  displayName: 'Application Name (used for Docker image name)'
+  default: ''
+
+- name: techStack
+  type: string
+  displayName: 'Technology Stack (e.g., dotnet, dotnet-container)'
+  default: 'dotnet'
+
+- name: containerRegistryServiceConnection
+  type: string
+  displayName: 'Azure Container Registry Service Connection Name'
+  default: '' # Required if techStack is 'dotnet-container'
+
+steps:
+- task: UseDotNet@2
+  displayName: 'Use .NET SDK 8.x'
+  inputs:
+    version: '8.x' # Specifies the .NET SDK version to use for the build agent
+
+- task: DotNetCoreCLI@2
+  displayName: 'Restore NuGet Packages'
+  inputs:
+    command: 'restore'
+    projects: '${{ parameters.solutionPath }}' # Restores dependencies for the specified solution
+    arguments: '' # No additional arguments needed for restore
+
+- task: DotNetCoreCLI@2
+  displayName: 'Build .NET Application'
+  inputs:
+    command: 'build'
+    projects: '${{ parameters.solutionPath }}' # Builds the specified solution
+    arguments: '--configuration ${{ parameters.buildConfiguration }}' # Uses the specified build configuration
+    publishWebProjects: false # Set to false as publish step handles web projects
+
+# Conditional steps for building and pushing a Docker image
+- ${{ if eq(parameters.techStack, 'dotnet-container') }}:
+  - task: DotNetCoreCLI@2
+    displayName: 'Publish .NET App for Docker'
+    inputs:
+      command: 'publish'
+      projects: '${{ parameters.solutionPath }}'
+      # Publishes the application to a directory suitable for Docker context
+      arguments: '--configuration ${{ parameters.buildConfiguration }} --output $(Build.ArtifactStagingDirectory)/app --no-build --no-restore'
+      zipAfterPublish: false # Do not zip, as Docker needs the directory structure
+
+  - task: Docker@2
+    displayName: 'Build and Push Docker Image'
+    inputs:
+      command: 'buildAndPush'
+      repository: '${{ parameters.appName }}' # The name of the Docker image (e.g., 'myargodotnetapi')
+      dockerfile: '$(Build.SourcesDirectory)/Dockerfile' # Path to the Dockerfile in the application's repo
+      containerRegistry: '${{ parameters.containerRegistryServiceConnection }}' # Azure DevOps service connection to ACR
+      tags: |
+        $(Build.BuildId) # Tags the image with the unique Azure DevOps Build ID
+        latest # Optional: Also tag with 'latest'. Use with caution in production.
+    condition: and(succeeded(), ne(parameters.containerRegistryServiceConnection, '')) # Only run if previous steps succeeded and ACR connection is provided

@@ -1,0 +1,170 @@
+# File: PlatformAutomation/templates/dotnet-ci-cd.yml
+
+parameters:
+- name: appName
+  type: string
+- name: repoName
+  type: string
+- name: solutionPath
+  type: string
+- name: testProjectPath
+  type: string
+- name: techStack
+  type: string
+- name: azureSubscriptionServiceConnection
+  type: string
+- name: agentPoolName
+  type: string
+- name: containerRegistryServiceConnection
+  type: string
+- name: enableCI
+  type: boolean
+- name: enableCD
+  type: boolean
+- name: devDeploymentType
+  type: string
+  default: 'none'
+- name: devAppServiceName
+  type: string
+  default: ''
+- name: devResourceGroupName
+  type: string
+  default: ''
+- name: devAppUrlForTests
+  type: string
+  default: ''
+- name: qaDeploymentType
+  type: string
+  default: 'none'
+- name: qaAppUrlForTests
+  type: string
+  default: ''
+- name: qaGitOpsRepoUrl
+  type: string
+  default: ''
+- name: qaManifestPath
+  type: string
+  default: ''
+- name: qaK8sImageName
+  type: string
+  default: ''
+- name: prodDeploymentType
+  type: string
+  default: 'none'
+- name: prodAppUrlForTests
+  type: string
+  default: ''
+- name: prodGitOpsRepoUrl
+  type: string
+  default: ''
+- name: prodManifestPath
+  type: string
+  default: ''
+- name: prodK8sImageName
+  type: string
+  default: ''
+
+stages:
+- stage: Build
+  displayName: 'CI - Build & Test'
+  jobs:
+  - job: BuildAndTest
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    steps:
+    - checkout: self
+    
+    - ${{ if eq(parameters.enableCI, true) }}:
+      - template: shared/dotnet-build.yml@platform_templates
+        parameters:
+          solutionPath: ${{ parameters.solutionPath }}
+          appName: ${{ parameters.appName }}
+          techStack: ${{ parameters.techStack }}
+          containerRegistryServiceConnection: ${{ parameters.containerRegistryServiceConnection }}
+      
+      - template: shared/dotnet-test.yml@platform_templates
+        parameters:
+          testProjectPath: ${{ parameters.testProjectPath }}
+          appName: ${{ parameters.appName }}
+    
+    - ${{ if eq(parameters.enableCD, true) }}:
+      - publish: '$(Build.ArtifactStagingDirectory)/drop'
+        artifact: 'drop'
+        displayName: 'Publish Build Artifacts'
+
+- stage: DeployToDev
+  displayName: 'CD - Deploy to DEV'
+  dependsOn: Build
+  condition: and(succeeded(), eq('${{ parameters.enableCD }}', 'true'), ne('${{ parameters.devDeploymentType }}', 'none'))
+  jobs:
+  - deployment: DeployDev
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: 'drop'
+
+          - template: shared/deploy-app.yml@platform_templates
+            parameters:
+              environmentName: 'dev'
+              deploymentType: ${{ parameters.devDeploymentType }}
+              azureSubscriptionServiceConnection: ${{ parameters.azureSubscriptionServiceConnection }}
+              appServiceName: ${{ parameters.devAppServiceName }}
+              resourceGroupName: ${{ parameters.devResourceGroupName }}
+              appUrlForTests: ${{ parameters.devAppUrlForTests }}
+
+- stage: DeployToQA
+  displayName: 'CD - Deploy to QA'
+  dependsOn: DeployToDev
+  condition: and(succeeded(), eq('${{ parameters.enableCD }}', 'true'), ne('${{ parameters.qaDeploymentType }}', 'none'))
+  jobs:
+  - deployment: DeployQA
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    environment: 'qa'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: 'drop'
+          
+          - template: shared/deploy-app.yml@platform_templates
+            parameters:
+              environmentName: 'qa'
+              deploymentType: ${{ parameters.qaDeploymentType }}
+              azureSubscriptionServiceConnection: ${{ parameters.azureSubscriptionServiceConnection }}
+              appUrlForTests: ${{ parameters.qaAppUrlForTests }}
+              gitOpsRepoUrl: ${{ parameters.qaGitOpsRepoUrl }}
+              manifestPath: ${{ parameters.qaManifestPath }}
+              k8sImageName: ${{ parameters.qaK8sImageName }}
+
+- stage: DeployToProd
+  displayName: 'CD - Deploy to PROD'
+  dependsOn: DeployToQA
+  condition: and(succeeded(), eq('${{ parameters.enableCD }}', 'true'), ne('${{ parameters.prodDeploymentType }}', 'none'))
+  jobs:
+  - deployment: DeployProd
+    pool:
+      name: ${{ parameters.agentPoolName }}
+    environment: 'prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: 'drop'
+          
+          - template: shared/deploy-app.yml@platform_templates
+            parameters:
+              environmentName: 'prod'
+              deploymentType: ${{ parameters.prodDeploymentType }}
+              azureSubscriptionServiceConnection: ${{ parameters.azureSubscriptionServiceConnection }}
+              appUrlForTests: ${{ parameters.prodAppUrlForTests }}
+              gitOpsRepoUrl: ${{ parameters.prodGitOpsRepoUrl }}
+              manifestPath: ${{ parameters.prodManifestPath }}
+              k8sImageName: ${{ parameters.prodK8sImageName }}

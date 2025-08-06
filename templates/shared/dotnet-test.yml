@@ -1,0 +1,37 @@
+# File: PlatformAutomation/templates/shared/dotnet-test.yml
+# This template defines the standard steps for running unit tests on a .NET application
+# and publishing the test results.
+
+parameters:
+- name: testProjectPath
+  type: string
+  displayName: 'Path to the test project file (e.g., tests/MyApp.Tests/MyApp.Tests.csproj)'
+  default: ''
+
+- name: appName
+  type: string
+  displayName: 'Application Name'
+  default: ''
+
+- name: buildConfiguration
+  type: string
+  displayName: 'Build Configuration (e.g., Release, Debug)'
+  default: 'Release'
+
+steps:
+- task: DotNetCoreCLI@2
+  displayName: 'Run Unit Tests for ${{ parameters.appName }}'
+  inputs:
+    command: 'test'
+    projects: '${{ parameters.testProjectPath }}'
+    arguments: '--configuration ${{ parameters.buildConfiguration }} --collect "Code coverage" --results-directory $(Agent.TempDirectory)/TestResults'
+    publishTestResults: false # We will publish the results in a separate task to ensure the test file is generated first
+
+- task: PublishTestResults@2
+  displayName: 'Publish Test Results for ${{ parameters.appName }}'
+  inputs:
+    testResultsFormat: 'VSTest'
+    testResultsFiles: '$(Agent.TempDirectory)/TestResults/**/*.trx'
+    failTaskOnFailedTests: true
+    testRunTitle: '${{ parameters.appName }} Unit Tests'
+  condition: succeededOrFailed() # This ensures the task runs even if tests fail, so results are always published

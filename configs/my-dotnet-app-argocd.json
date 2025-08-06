@@ -1,0 +1,55 @@
+{
+  "appName": "MyArgoDotnetApi",
+  "repoName": "my-argo-dotnet-api-repo",
+  "repoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argo-dotnet-api-repo",
+  "solutionPath": "src/MyArgoDotnetApi/MyArgoDotnetApi.sln",
+  "testProjectPath": "tests/MyArgoDotnetApi.Tests/MyArgoDotnetApi.Tests.csproj",
+  "techStack": "dotnet-container",
+  "buildTool": "DotNetCLI",
+  "azureSubscriptionServiceConnection": "YourAzureServiceConnection",
+  "agentPoolName": "Azure Pipelines",
+  "containerRegistryServiceConnection": "YourAcrServiceConnection",
+  "enableCI": true,
+  "enableCD": true,
+
+  "environments": {
+    "dev": {
+      "name": "Development",
+      "appUrlForTests": "http://dev.myargodotnetapi.com",
+      "deploymentOptions": [
+        {
+          "type": "azureWebApp",
+          "enabled": true,
+          "appServiceName": "myargodotnetapi-dev-webapp",
+          "resourceGroupName": "rg-myargodotnetapi-dev"
+        }
+      ]
+    },
+    "qa": {
+      "name": "QA",
+      "appUrlForTests": "http://qa.myargodotnetapi.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-argo-dotnet-api/qa/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/myargodotnetapi"
+        }
+      ]
+    },
+    "prod": {
+      "name": "Production",
+      "appUrlForTests": "http://prod.myargodotnetapi.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-argo-dotnet-api/prod/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/myargodotnetapi"
+        }
+      ]
+    }
+  }
+}

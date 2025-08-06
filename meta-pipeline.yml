@@ -1,0 +1,229 @@
+# File: PlatformAutomation/meta-pipeline.yml
+
+# Script to read my-dotnet-app-argocd.json
+# Set all pipeline variables based on config
+# Clone the developer's repository
+# Generate .azuredevops/azure-pipelines.yml
+# Generate config/params.json
+# Commit and push changes back to the developer's repo
+
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - configs/
+
+pr:
+  branches:
+    include:
+      - main
+
+parameters:
+- name: appConfigFilePath
+  displayName: 'Path to Application Configuration JSON'
+  type: string
+  default: 'configs/my-dotnet-app-argocd.json'
+  values:
+  - 'configs/my-dotnet-app-argocd.json'
+
+jobs:
+- job: OnboardApplication
+  displayName: 'Onboard/Update Application CI/CD'
+  pool:
+    name: Azure Pipelines
+
+  steps:
+  - checkout: self
+
+  - task: PowerShell@2
+    displayName: 'Install Azure DevOps CLI Extension'
+    inputs:
+      targetType: 'inline'
+      script: |
+        az extension add --name azure-devops --yes
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+
+  - task: PowerShell@2
+    displayName: 'Read Application Configuration and Prepare Repository'
+    inputs:
+      targetType: 'inline'
+      script: |
+        $ErrorActionPreference = "Stop"
+
+        $appConfigFilePath = "${{ parameters.appConfigFilePath }}"
+        Write-Host "Attempting to read application configuration from: $appConfigFilePath"
+
+        if (-not (Test-Path $appConfigFilePath)) {
+            Write-Error "Application configuration file not found at $appConfigFilePath"
+            exit 1
+        }
+
+        $appConfig = Get-Content $appConfigFilePath | ConvertFrom-Json
+        Write-Host "Successfully read application configuration for $($appConfig.appName)"
+
+        # --- Set core pipeline variables from appConfig ---
+        Write-Host "##vso[task.setvariable variable=appName]$($appConfig.appName)"
+        Write-Host "##vso[task.setvariable variable=repoName]$($appConfig.repoName)"
+        Write-Host "##vso[task.setvariable variable=solutionPath]$($appConfig.solutionPath)"
+        Write-Host "##vso[task.setvariable variable=testProjectPath]$($appConfig.testProjectPath)"
+        Write-Host "##vso[task.setvariable variable=techStack]$($appConfig.techStack)"
+        Write-Host "##vso[task.setvariable variable=azureSubscriptionServiceConnection]$($appConfig.azureSubscriptionServiceConnection)"
+        Write-Host "##vso[task.setvariable variable=agentPoolName]$($appConfig.agentPoolName)"
+        Write-Host "##vso[task.setvariable variable=containerRegistryServiceConnection]$($appConfig.containerRegistryServiceConnection)"
+        Write-Host "##vso[task.setvariable variable=enableCI]$($appConfig.enableCI)"
+        Write-Host "##vso[task.setvariable variable=enableCD]$($appConfig.enableCD)"
+        $metaPipelineName = "$(Build.DefinitionName)"
+
+        # --- Process environment-specific deployment options ---
+        $environments = @("dev", "qa", "prod")
+        foreach ($env in $environments) {
+            $envConfig = $appConfig.environments.$env
+            if ($envConfig) {
+                $enabledDeploymentOption = $envConfig.deploymentOptions | Where-Object { $_.enabled } | Select-Object -First 1
+
+                if ($enabledDeploymentOption) {
+                    $deploymentType = $enabledDeploymentOption.type
+                    Write-Host "##vso[task.setvariable variable=${env}DeploymentType]$deploymentType"
+
+                    foreach ($prop in $enabledDeploymentOption.PSObject.Properties) {
+                        if ($prop.Name -ne 'type' -and $prop.Name -ne 'enabled') {
+                            Write-Host "##vso[task.setvariable variable=${env}$($prop.Name)]$($prop.Value)"
+                        }
+                    }
+                } else {
+                    Write-Host "##vso[task.setvariable variable=${env}DeploymentType]none"
+                }
+            } else {
+                Write-Host "No configuration found for environment: $env"
+                Write-Host "##vso[task.setvariable variable=${env}DeploymentType]none"
+            }
+        }
+
+        # --- Git Operations: Clone, Generate Files, Commit, Push ---
+        $repoUrl = $appConfig.repoUrl
+        $tempRepoPath = "$(Agent.TempDirectory)/$(repoName)"
+        Write-Host "Cloning repository $repoUrl to $tempRepoPath"
+        git config --global user.email "azuredevops@yourcompany.com"
+        git config --global user.name "Azure DevOps Automation"
+        git clone $repoUrl $tempRepoPath -b main --depth 1
+
+        Set-Location $tempRepoPath
+
+        # Create .azuredevops directory if it doesn't exist
+        $azureDevopsDir = Join-Path $tempRepoPath ".azuredevops"
+        if (-not (Test-Path $azureDevopsDir)) {
+            New-Item -ItemType Directory -Path $azureDevopsDir
+            Write-Host "Created directory: $azureDevopsDir"
+        }
+
+        # Generate azure-pipelines.yml
+        $pipelineYamlContent = @"
+# File: .azuredevops/azure-pipelines.yml
+# Generated by $metaPipelineName - DO NOT EDIT MANUALLY
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - '*'
+resources:
+  repositories:
+    - repository: platform_templates
+      type: git
+      name: $(System.TeamProject)/PlatformAutomation
+      ref: main
+extends:
+  template: templates/dotnet-ci-cd.yml@platform_templates
+  parameters:
+    appName: '$(appName)'
+    repoName: '$(repoName)'
+    solutionPath: '$(solutionPath)'
+    testProjectPath: '$(testProjectPath)'
+    techStack: '$(techStack)'
+    azureSubscriptionServiceConnection: '$(azureSubscriptionServiceConnection)'
+    agentPoolName: '$(agentPoolName)'
+    containerRegistryServiceConnection: '$(containerRegistryServiceConnection)'
+    enableCI: '$(enableCI)'
+    enableCD: '$(enableCD)'
+    # Dev Environment Params
+    devDeploymentType: '$(devDeploymentType)'
+    devAppServiceName: '$(devAppServiceName)'
+    devResourceGroupName: '$(devResourceGroupName)'
+    devAppUrlForTests: '$(devAppUrlForTests)'
+    # QA Environment Params
+    qaDeploymentType: '$(qaDeploymentType)'
+    qaAppUrlForTests: '$(qaAppUrlForTests)'
+    qaGitOpsRepoUrl: '$(qaGitOpsRepoUrl)'
+    qaManifestPath: '$(qaManifestPath)'
+    qaK8sImageName: '$(qaK8sImageName)'
+    # Prod Environment Params
+    prodDeploymentType: '$(prodDeploymentType)'
+    prodAppUrlForTests: '$(prodAppUrlForTests)'
+    prodGitOpsRepoUrl: '$(prodGitOpsRepoUrl)'
+    prodManifestPath: '$(prodManifestPath)'
+    prodK8sImageName: '$(prodK8sImageName)'
+"@
+        Set-Content -Path (Join-Path $azureDevopsDir "azure-pipelines.yml") -Value $pipelineYamlContent
+        Write-Host "Generated .azuredevops/azure-pipelines.yml"
+
+        # Create config directory if it doesn't exist
+        $configDir = Join-Path $tempRepoPath "config"
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir
+            Write-Host "Created directory: $configDir"
+        }
+
+        # Generate params.json
+        $paramsJsonContent = @{
+            appName = $appConfig.appName;
+            buildConfiguration = "Release";
+            appEnvironment = "Development";
+            techStack = $appConfig.techStack;
+        } | ConvertTo-Json -Depth 5 -Compress
+        Set-Content -Path (Join-Path $configDir "params.json") -Value $paramsJsonContent
+        Write-Host "Generated config/params.json"
+
+        # Commit and Push
+        git add .
+        $status = git status --porcelain
+        if ($status) {
+            Write-Host "Changes detected. Committing and pushing."
+            git commit -m "chore(platform): Onboard/Update CI/CD pipeline for $(appName) [skip ci]"
+            $PAT = "$(System.AccessToken)"
+            $B64_PAT = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("PAT:$PAT"))
+            $repoUrlWithAuth = $repoUrl -replace "https://", "https://oauth2:$($PAT)@"
+            git push $repoUrlWithAuth main
+            Write-Host "Committed and pushed changes to $(repoName) main branch."
+        } else {
+            Write-Host "No changes detected. Skipping commit and push."
+        }
+
+        # --- Create/Update Azure DevOps Pipeline Definition ---
+        $pipelineName = "$(appName)-CI-CD"
+        $projectUrl = "$(System.CollectionUri)$(System.TeamProject)"
+
+        Write-Host "Checking for existing pipeline definition for $pipelineName..."
+        try {
+            az pipelines show --name "$pipelineName" --project "$(System.TeamProject)" --query "id" -o tsv --only-show-errors | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Pipeline '$pipelineName' already exists. Updating it."
+                az pipelines update --name "$pipelineName" --yaml-path ".azuredevops/azure-pipelines.yml" --repository "$repoName" --branch "main" --project "$(System.TeamProject)" --only-show-errors
+            }
+            else {
+                Write-Host "Pipeline '$pipelineName' does not exist. Creating new pipeline."
+                az pipelines create --name "$pipelineName" --yaml-path ".azuredevops/azure-pipelines.yml" --repository "$repoName" --branch "main" --project "$(System.TeamProject)" --only-show-errors
+            }
+            Write-Host "Azure DevOps pipeline definition for '$pipelineName' is up-to-date."
+        }
+        catch {
+            Write-Error "Failed to create/update Azure DevOps pipeline definition: $($_.Exception.Message)"
+            exit 1
+        }
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

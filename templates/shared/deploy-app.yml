@@ -1,0 +1,215 @@
+# File: PlatformAutomation/templates/shared/deploy-app.yml
+# This template contains the common deployment logic for various environment types.
+# It uses conditional statements to execute specific tasks based on the 'deploymentType' parameter.
+# It supports imperative deployments (e.g., Azure Web Apps) and declarative GitOps deployments (e.g., OpenShift/Argo CD).
+
+parameters:
+- name: environmentName
+  type: string
+  displayName: 'Environment Name (e.g., dev, qa, prod)'
+  default: ''
+
+- name: deploymentType
+  type: string
+  displayName: 'Deployment Type (e.g., azureWebApp, onPremiseFCI, openShift)'
+  default: 'none'
+
+# Parameters for Azure Web App Deployment
+- name: appServiceName
+  type: string
+  displayName: 'Azure App Service Name'
+  default: ''
+
+- name: resourceGroupName
+  type: string
+  displayName: 'Azure Resource Group Name'
+  default: ''
+
+- name: azureSubscriptionServiceConnection
+  type: string
+  displayName: 'Azure Subscription Service Connection'
+  default: ''
+
+# Parameters for On-Premise FCI Deployment (File Copy Installation)
+- name: appServerName
+  type: string
+  displayName: 'On-Premise Server FQDN or IP'
+  default: ''
+
+- name: winRmServiceConnection
+  type: string
+  displayName: 'WinRM Service Connection for On-Premise'
+  default: ''
+
+- name: remotePath
+  type: string
+  displayName: 'Remote Path on On-Premise Server'
+  default: ''
+
+# Parameters for GitOps/Kubernetes Deployment (OpenShift/Argo CD)
+- name: gitOpsRepoUrl
+  type: string
+  displayName: 'GitOps Repository URL'
+  default: ''
+
+- name: manifestPath
+  type: string
+  displayName: 'Path to Kubernetes Manifest in GitOps Repo'
+  default: ''
+
+- name: k8sImageName
+  type: string
+  displayName: 'Base Kubernetes Image Name (e.g., youracr.azurecr.io/myimage)'
+  default: ''
+
+# Common parameter for post-deployment tests
+- name: appUrlForTests
+  type: string
+  displayName: 'Application URL for Post-Deployment Tests'
+  default: ''
+
+steps:
+# --- Azure Web App Deployment ---
+# This block executes if the deploymentType is 'azureWebApp'.
+# It uses the AzureRmWebAppDeployment task to push the web application artifact directly to Azure App Service.
+- ${{ if eq(parameters.deploymentType, 'azureWebApp') }}:
+  - task: AzureRmWebAppDeployment@4
+    displayName: 'Deploy to Azure Web App - ${{ parameters.environmentName }}'
+    inputs:
+      ConnectionType: 'AzureRM' # Specifies Azure Resource Manager connection type
+      azureSubscription: '${{ parameters.azureSubscriptionServiceConnection }}' # Service connection to Azure
+      appType: 'webApp' # Specifies the target is an Azure Web App
+      WebAppName: '${{ parameters.appServiceName }}' # Name of the Azure App Service instance
+      ResourceGroupName: '${{ parameters.resourceGroupName }}' # Resource group where the App Service resides
+      packageForDeploy: '$(Pipeline.Workspace)/drop/BackendWebApp.zip' # Path to the published web app artifact (from the Build stage)
+
+  - task: PowerShell@2
+    displayName: 'Run Post-Deployment Tests/Checks for Azure Web App - ${{ parameters.environmentName }}'
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "Running post-deployment tests for ${{ parameters.environmentName }} at ${{ parameters.appUrlForTests }}"
+        # This is a placeholder for actual test execution against the deployed app.
+        # Example: Invoke-RestMethod -Uri "${{ parameters.appUrlForTests }}/health" -ErrorAction SilentlyContinue
+        # Add logic here to check health endpoints, run simple smoke tests, etc.
+    condition: and(succeeded(), ne('${{ parameters.appUrlForTests }}', '')) # Only runs if previous steps succeeded and a URL is provided
+
+---
+
+# --- On-Premise FCI (File Copy Installation) Deployment ---
+# This block executes if the deploymentType is 'onPremiseFCI'.
+# It uses PowerShell to copy application files to a remote Windows server and optionally recycle IIS.
+- ${{ if eq(parameters.deploymentType, 'onPremiseFCI') }}:
+  - task: PowerShellOnTargetMachines@3
+    displayName: 'Deploy to On-Premise FCI - ${{ parameters.environmentName }}'
+    inputs:
+      Machines: '${{ parameters.appServerName }}' # FQDN or IP of the target Windows server
+      serviceEndpoint: '${{ parameters.winRmServiceConnection }}' # Azure DevOps WinRM service connection
+      ScriptType: 'Inline'
+      InlineScript: |
+        $remotePath = "${{ parameters.remotePath }}"
+        Write-Host "Ensuring remote path exists: $remotePath"
+        if (-not (Test-Path $remotePath)) {
+            New-Item -ItemType Directory -Path $remotePath -Force
+        } else {
+            Write-Host "Cleaning existing files in $remotePath"
+            Remove-Item -Path "$remotePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        
+        Write-Host "Copying application files to $remotePath"
+        Copy-Item -Path "$(Pipeline.Workspace)\drop\*" -Destination $remotePath -Recurse -Force
+        Write-Host "Files copied successfully."
+
+        # Optional: Recycle IIS Application Pool if applicable
+        try {
+            # Replace 'YourAppPoolName' with the actual name of your IIS Application Pool
+            $appPoolName = "MyFlexibleDotnetApiAppPool"
+            Write-Host "Attempting to recycle IIS Application Pool: $appPoolName"
+            Import-Module WebAdministration -ErrorAction SilentlyContinue
+            if (Get-WebAppPoolState $appPoolName | Select-Object -ExpandProperty Value -eq "Started") {
+                Stop-WebAppPool $appPoolName
+                Start-WebAppPool $appPoolName
+                Write-Host "Successfully recycled IIS Application Pool: $appPoolName"
+            } else {
+                Start-WebAppPool $appPoolName
+                Write-Host "Started IIS Application Pool: $appPoolName (was not running)"
+            }
+        }
+        catch {
+            Write-Warning "Could not recycle IIS App Pool. Error: $($_.Exception.Message)"
+            Write-Warning "Ensure IIS Management cmdlets are installed and App Pool '$appPoolName' exists."
+        }
+
+---
+
+# --- OpenShift/Kubernetes Deployment (via GitOps/Argo CD) ---
+# This block executes if the deploymentType is 'openShift'.
+# It performs Git operations to update the Kubernetes manifest in a separate GitOps repository.
+# Argo CD will then detect this change and deploy to the cluster.
+- ${{ if eq(parameters.deploymentType, 'openShift') }}:
+  - task: PowerShell@2
+    displayName: 'Update GitOps Manifest for Argo CD - ${{ parameters.environmentName }}'
+    inputs:
+      targetType: 'inline'
+      script: |
+        $gitOpsRepoUrl = "${{ parameters.gitOpsRepoUrl }}"
+        $manifestPath = "${{ parameters.manifestPath }}"
+        $imageTag = "$(Build.BuildId)" # The tag for the Docker image is the Azure DevOps Build ID
+        $imageName = "${{ parameters.k8sImageName }}" # Base image name (e.g., youracr.azurecr.io/myargodotnetapi)
+        $fullImage = "$imageName:$imageTag"
+
+        Write-Host "Preparing to update manifest '$manifestPath' in GitOps repo '$gitOpsRepoUrl' with image '$fullImage'"
+
+        # Clone the GitOps repository
+        $tempGitOpsPath = "$(Agent.TempDirectory)/gitops-repo"
+        Write-Host "Cloning GitOps repository to $tempGitOpsPath"
+        git config --global user.email "azuredevops@yourcompany.com"
+        git config --global user.name "Azure DevOps Automation"
+        # Use System.AccessToken for authentication to the GitOps repo
+        $PAT = "$(System.AccessToken)"
+        $repoUrlWithAuth = $gitOpsRepoUrl -replace "https://", "https://oauth2:$($PAT)@"
+        git clone $repoUrlWithAuth $tempGitOpsPath -b main --depth 1 # Clone only the main branch, shallow clone
+        Set-Location $tempGitOpsPath
+
+        # Read the manifest file
+        $fullManifestPath = Join-Path $tempGitOpsPath $manifestPath
+        if (-not (Test-Path $fullManifestPath)) {
+            Write-Error "Kubernetes manifest file not found at $fullManifestPath in GitOps repo."
+            exit 1
+        }
+        $manifestContent = Get-Content $fullManifestPath -Raw
+
+        # Use regex to update the image tag in the manifest
+        # This assumes a standard Kubernetes deployment manifest structure where image is defined as 'image: some/image:oldtag'
+        # This regex replaces the tag part after the base image name.
+        $updatedManifestContent = $manifestContent -replace "(image:\s*${imageName}):[^`"'\s]*", "`$1:$imageTag"
+
+        if ($manifestContent -eq $updatedManifestContent) {
+            Write-Warning "Manifest file was not updated. Ensure base image name '$imageName' matches pattern in '$manifestPath'."
+        } else {
+            Set-Content -Path $fullManifestPath -Value $updatedManifestContent
+            Write-Host "Manifest updated successfully. New image: $fullImage"
+
+            # Commit and Push changes to GitOps repository
+            git add $fullManifestPath
+            git commit -m "chore(app): Update ${{ parameters.appName }} image to $fullImage for ${{ parameters.environmentName }} [skip ci]"
+            git push $repoUrlWithAuth main
+            Write-Host "Pushed updated manifest to GitOps repository."
+        }
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken) # Ensure PAT is available for git push
+
+  - task: PowerShell@2
+    displayName: 'Run Post-Deployment Tests/Checks for Kubernetes - ${{ parameters.environmentName }}'
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "Running post-deployment tests for Kubernetes deployment in ${{ parameters.environmentName }}"
+        Write-Host "App URL for tests: ${{ parameters.appUrlForTests }}"
+        # This is where you'd run tests against the deployed application.
+        # For GitOps, Argo CD deploys asynchronously. You might need to add a wait step
+        # here to ensure the rollout is complete before running functional tests.
+        # Example: You could use 'kubectl rollout status deployment/{{ parameters.k8sDeploymentName }} -n {{ parameters.k8sNamespace }}'
+        # Requires kubectl to be installed on the agent and a Kubernetes service connection
+        # if you want to query the cluster directly from the pipeline.
+    condition: and(succeeded(), ne('${{ parameters.appUrlForTests }}', ''))
