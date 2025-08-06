@@ -1,0 +1,52 @@
+{
+  "appName": "MyFlexibleDotnetApi",
+  "repoName": "my-dotnet-api-repo",
+  "repoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-dotnet-api-repo",
+  "solutionPath": "src/MyFlexibleDotnetApi/MyFlexibleDotnetApi.csproj",
+  "testProjectPath": "tests/MyFlexibleDotnetApi.Tests/MyFlexibleDotnetApi.Tests.csproj",
+  "techStack": "dotnet-container",
+  "azureSubscriptionServiceConnection": "YourAzureServiceConnection",
+  "agentPoolName": "Azure Pipelines",
+  "containerRegistryServiceConnection": "YourAcrSer viceConnection",
+
+  "environments": {
+    "dev": {
+      "name": "Development",
+      "appUrlForTests": "https://my-dotnet-api-dev.azurewebsites.net",
+      "deploymentOptions": [
+        {
+          "type": "azureWebApp",
+          "enabled": true,
+          "appServiceName": "my-dotnet-api-dev",
+          "resourceGroupName": "rg-my-dotnet-dev"
+        }
+      ]
+    },
+    "qa": {
+      "name": "QA",
+      "appUrlForTests": "http://qa.my-dotnet-api.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-dotnet-api/qa/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-dotnet-api"
+        }
+      ]
+    },
+    "prod": {
+      "name": "Production",
+      "appUrlForTests": "http://prod.my-dotnet-api.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-dotnet-api/prod/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-dotnet-api"
+        }
+      ]
+    }
+  }
+}

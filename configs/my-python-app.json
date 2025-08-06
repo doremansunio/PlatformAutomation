@@ -1,0 +1,51 @@
+{
+  "appName": "MyPythonApp",
+  "repoName": "my-python-app-repo",
+  "repoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-python-app-repo",
+  "solutionPath": "src/my_python_app",
+  "techStack": "python-container",
+  "agentPoolName": "Azure Pipelines",
+  "containerRegistryServiceConnection": "YourAcrServiceConnection",
+
+  "environments": {
+    "dev": {
+      "name": "Development",
+      "appUrlForTests": "http://dev.mypythonapp.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-python-app/dev/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-python-app"
+        }
+      ]
+    },
+    "qa": {
+      "name": "QA",
+      "appUrlForTests": "http://qa.mypythonapp.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-python-app/qa/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-python-app"
+        }
+      ]
+    },
+    "prod": {
+      "name": "Production",
+      "appUrlForTests": "http://prod.mypythonapp.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-python-app/prod/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-python-app"
+        }
+      ]
+    }
+  }
+}

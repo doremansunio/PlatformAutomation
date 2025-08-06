@@ -1,0 +1,51 @@
+{
+  "appName": "MyReactApp",
+  "repoName": "my-react-app-repo",
+  "repoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-react-app-repo",
+  "solutionPath": "src/my-react-app",
+  "techStack": "nodejs-container",
+  "agentPoolName": "Azure Pipelines",
+  "containerRegistryServiceConnection": "YourAcrServiceConnection",
+
+  "environments": {
+    "dev": {
+      "name": "Development",
+      "appUrlForTests": "http://dev.myreactapp.com",
+      "deploymentOptions": [
+        {
+          "type": "onPremiseFCI",
+          "enabled": true,
+          "winRmServiceConnection": "OnPremWinRmConnection",
+          "appServerName": "vm-react-dev.yourcorp.local",
+          "remotePath": "C:\\inetpub\\wwwroot\\my-react-app"
+        }
+      ]
+    },
+    "qa": {
+      "name": "QA",
+      "appUrlForTests": "http://qa.myreactapp.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-react-app/qa/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-react-app"
+        }
+      ]
+    },
+    "prod": {
+      "name": "Production",
+      "appUrlForTests": "http://prod.myreactapp.com",
+      "deploymentOptions": [
+        {
+          "type": "openShift",
+          "enabled": true,
+          "gitOpsRepoUrl": "https://dev.azure.com/YourOrg/YourProject/_git/my-argocd-manifests",
+          "manifestPath": "apps/my-react-app/prod/deployment.yaml",
+          "k8sImageName": "youracr.azurecr.io/my-react-app"
+        }
+      ]
+    }
+  }
+}
